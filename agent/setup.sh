@@ -6,7 +6,7 @@
 #
 # Outputs:
 #   AGENT_ID and ENVIRONMENT_ID — store these as GitHub Actions variables
-#   on BLANXLAIT/github-brain so CDK synth can read them from env.
+#   on niemesrw/github-brain so CDK synth can read them from env.
 
 set -euo pipefail
 
@@ -51,6 +51,6 @@ ENVIRONMENT_ID=$(jq -er '.id' <<<"$environment")
 echo "ENVIRONMENT_ID=$ENVIRONMENT_ID"
 
 echo ""
-echo "Set these as GitHub Actions variables (not secrets) on BLANXLAIT/github-brain:"
-echo "  gh variable set AGENT_ID       --body $AGENT_ID       --repo BLANXLAIT/github-brain"
-echo "  gh variable set ENVIRONMENT_ID --body $ENVIRONMENT_ID --repo BLANXLAIT/github-brain"
+echo "Set these as GitHub Actions variables (not secrets) on niemesrw/github-brain:"
+echo "  gh variable set AGENT_ID       --body $AGENT_ID       --repo niemesrw/github-brain"
+echo "  gh variable set ENVIRONMENT_ID --body $ENVIRONMENT_ID --repo niemesrw/github-brain"
