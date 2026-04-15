@@ -149,6 +149,25 @@ Every delivery emits one line — either a dispatch (`session dispatched`) or a 
 
 **App-side deliveries**: https://github.com/settings/apps/gh-brain/advanced — full request/response history with replay button.
 
+## Cost controls
+
+Three layers, highest-leverage first:
+
+1. **Anthropic spend limit** — set a monthly USD cap at https://console.anthropic.com/settings/limits. Hard external guarantee that survives any code bug.
+2. **Hourly dispatch limit** — Lambda refuses to create new sessions after 30 dispatches/hour (configurable via `HOURLY_DISPATCH_LIMIT` env var). Blocks runaway loops; resets at the top of each clock hour.
+3. **Kill switch** — flip `DISPATCH_ENABLED=false` on the Lambda to make every webhook return `200 ignored: kill switch engaged`. Instant stop, no redeploy needed:
+
+```bash
+aws lambda update-function-configuration \
+  --function-name $(aws lambda list-functions --profile blanxlait-ai --region us-east-1 \
+    --query "Functions[?starts_with(FunctionName, 'GithubBrainWebhook')].FunctionName | [0]" \
+    --output text) \
+  --environment "Variables={DISPATCH_ENABLED=false}" \
+  --profile blanxlait-ai --region us-east-1
+```
+
+To re-enable, `--environment "Variables={DISPATCH_ENABLED=true}"` (or redeploy the CDK stack, which picks up defaults).
+
 ## Security notes
 
 - The Lambda includes a short-lived installation token (~1 hour TTL) in the user-message body sent to the Managed Agent. Session events are stored server-side by Anthropic. The token is scoped to one installation and one event, and auto-expires. For v1 this tradeoff is acceptable. A later ship can replace this with an MCP server that mints tokens on demand so the token never crosses the boundary.

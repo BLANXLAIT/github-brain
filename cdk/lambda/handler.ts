@@ -1,6 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBClient,
+  PutItemCommand,
+  UpdateItemCommand,
+} from "@aws-sdk/client-dynamodb";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { createAppAuth } from "@octokit/auth-app";
 
@@ -30,6 +34,28 @@ async function markOnce(key: string, ttlSeconds: number): Promise<boolean> {
     if (err?.name === "ConditionalCheckFailedException") return false;
     throw err;
   }
+}
+
+const HOURLY_DISPATCH_LIMIT = Number(process.env.HOURLY_DISPATCH_LIMIT ?? 30);
+
+async function incrementHourlyCount(): Promise<number> {
+  const table = process.env.DEDUPE_TABLE;
+  if (!table) return 0;
+  const bucket = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+  const res = await ddb.send(
+    new UpdateItemCommand({
+      TableName: table,
+      Key: { deliveryId: { S: `rate:${bucket}` } },
+      UpdateExpression: "ADD #c :one SET #ttl = if_not_exists(#ttl, :ttl)",
+      ExpressionAttributeNames: { "#c": "count", "#ttl": "ttl" },
+      ExpressionAttributeValues: {
+        ":one": { N: "1" },
+        ":ttl": { N: String(Math.floor(Date.now() / 1000) + 3 * 60 * 60) },
+      },
+      ReturnValues: "UPDATED_NEW",
+    })
+  );
+  return Number(res.Attributes?.count?.N ?? "0");
 }
 
 function taskKey(task: Task): string {
@@ -175,6 +201,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const eventName = headers["x-github-event"];
   const deliveryId = headers["x-github-delivery"];
 
+  if (process.env.DISPATCH_ENABLED === "false") {
+    console.log("ignored: kill switch engaged", { deliveryId, eventName });
+    return { statusCode: 200, body: "ignored: kill switch engaged" };
+  }
+
   const webhookSecret = await getSecret(process.env.WEBHOOK_SECRET_ARN!);
   if (!verifySignature(body, signature, webhookSecret)) {
     console.log("signature mismatch", { deliveryId });
@@ -205,6 +236,16 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       key: taskKey(task),
     });
     return { statusCode: 200, body: "ignored: recent session for this task" };
+  }
+
+  const count = await incrementHourlyCount();
+  if (count > HOURLY_DISPATCH_LIMIT) {
+    console.log("ignored: hourly dispatch limit exceeded", {
+      deliveryId,
+      count,
+      limit: HOURLY_DISPATCH_LIMIT,
+    });
+    return { statusCode: 200, body: "ignored: hourly dispatch limit exceeded" };
   }
 
   const [privateKey, anthropicKey] = await Promise.all([

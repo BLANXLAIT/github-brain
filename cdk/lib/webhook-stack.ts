@@ -58,6 +58,8 @@ export class WebhookStack extends Stack {
         APP_PRIVATE_KEY_ARN: appPrivateKey.secretArn,
         ANTHROPIC_KEY_ARN: anthropicKey.secretArn,
         DEDUPE_TABLE: dedupeTable.tableName,
+        DISPATCH_ENABLED: process.env.DISPATCH_ENABLED ?? "true",
+        HOURLY_DISPATCH_LIMIT: process.env.HOURLY_DISPATCH_LIMIT ?? "30",
       },
       bundling: {
         minify: true,
