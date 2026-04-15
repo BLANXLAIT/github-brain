@@ -1,10 +1,35 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { createAppAuth } from "@octokit/auth-app";
 
 const sm = new SecretsManagerClient({});
+const ddb = new DynamoDBClient({});
 const secretCache = new Map<string, string>();
+
+const DEDUPE_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+async function markDelivery(deliveryId: string): Promise<boolean> {
+  const table = process.env.DEDUPE_TABLE;
+  if (!table) return true;
+  try {
+    await ddb.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: {
+          deliveryId: { S: deliveryId },
+          ttl: { N: String(Math.floor(Date.now() / 1000) + DEDUPE_TTL_SECONDS) },
+        },
+        ConditionExpression: "attribute_not_exists(deliveryId)",
+      })
+    );
+    return true;
+  } catch (err: any) {
+    if (err?.name === "ConditionalCheckFailedException") return false;
+    throw err;
+  }
+}
 
 async function getSecret(arn: string): Promise<string> {
   const cached = secretCache.get(arn);
@@ -161,14 +186,20 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   }
   const task = decision;
 
-  const privateKey = await getSecret(process.env.APP_PRIVATE_KEY_ARN!);
+  if (deliveryId && !(await markDelivery(deliveryId))) {
+    console.log("ignored: duplicate delivery", { deliveryId, eventName });
+    return { statusCode: 200, body: "ignored: duplicate delivery" };
+  }
+
+  const [privateKey, anthropicKey] = await Promise.all([
+    getSecret(process.env.APP_PRIVATE_KEY_ARN!),
+    getSecret(process.env.ANTHROPIC_KEY_ARN!),
+  ]);
   const auth = createAppAuth({ appId: process.env.GH_APP_ID!, privateKey });
   const { token } = await auth({
     type: "installation",
     installationId: Number(process.env.GH_INSTALLATION_ID_OPENBRAIN!),
   });
-
-  const anthropicKey = await getSecret(process.env.ANTHROPIC_KEY_ARN!);
   const anthropicHeaders = {
     "x-api-key": anthropicKey,
     "anthropic-version": "2023-06-01",

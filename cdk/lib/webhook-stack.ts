@@ -1,7 +1,8 @@
 import * as path from "node:path";
-import { CfnOutput, Duration, Stack, StackProps } from "aws-cdk-lib";
+import { CfnOutput, Duration, RemovalPolicy, Stack, StackProps } from "aws-cdk-lib";
 import { HttpApi, HttpMethod } from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
 import { Architecture, Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction, OutputFormat } from "aws-cdk-lib/aws-lambda-nodejs";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
@@ -20,17 +21,25 @@ export class WebhookStack extends Stack {
 
     const webhookSecret = new Secret(this, "GithubWebhookSecret", {
       secretName: "github-brain/webhook-secret",
-      description: "GitHub App webhook signing secret (blanxlait-agent-manager)",
+      description: "GitHub App webhook signing secret (gh-brain)",
     });
 
     const appPrivateKey = new Secret(this, "GithubAppPrivateKey", {
       secretName: "github-brain/app-private-key",
-      description: "GitHub App private key PEM (blanxlait-agent-manager)",
+      description: "GitHub App private key PEM (gh-brain)",
     });
 
     const anthropicKey = new Secret(this, "AnthropicApiKey", {
       secretName: "github-brain/anthropic-api-key",
       description: "Anthropic API key for Managed Agents",
+    });
+
+    const dedupeTable = new Table(this, "DeliveryDedupeTable", {
+      tableName: "github-brain-delivery-dedupe",
+      partitionKey: { name: "deliveryId", type: AttributeType.STRING },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "ttl",
+      removalPolicy: RemovalPolicy.DESTROY,
     });
 
     const handler = new NodejsFunction(this, "WebhookHandler", {
@@ -48,6 +57,7 @@ export class WebhookStack extends Stack {
         WEBHOOK_SECRET_ARN: webhookSecret.secretArn,
         APP_PRIVATE_KEY_ARN: appPrivateKey.secretArn,
         ANTHROPIC_KEY_ARN: anthropicKey.secretArn,
+        DEDUPE_TABLE: dedupeTable.tableName,
       },
       bundling: {
         minify: true,
@@ -60,6 +70,7 @@ export class WebhookStack extends Stack {
     webhookSecret.grantRead(handler);
     appPrivateKey.grantRead(handler);
     anthropicKey.grantRead(handler);
+    dedupeTable.grantWriteData(handler);
 
     const api = new HttpApi(this, "WebhookApi", {
       apiName: "github-brain-webhook",
