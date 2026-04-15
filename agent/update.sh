@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Update an existing Managed Agent's system prompt.
 #
-# Managed Agents are versioned — the ID doesn't change across prompt edits.
-# Re-run this any time you edit system-prompt.md.
+# Managed Agents are versioned — the ID doesn't change across prompt edits,
+# but each update increments the version and the API requires the current
+# version for optimistic concurrency.
 #
 # Requires:
 #   ANTHROPIC_API_KEY  Anthropic API key
@@ -22,11 +23,17 @@ HEADERS=(
 
 SYSTEM_PROMPT=$(cat "$(dirname "$0")/system-prompt.md")
 
-echo "Updating agent $AGENT_ID..."
-result=$(curl -sS --fail-with-body -X POST "https://api.anthropic.com/v1/agents/$AGENT_ID" "${HEADERS[@]}" \
-  -d "$(jq -n \
-    --arg system "$SYSTEM_PROMPT" \
-    '{system: $system}')")
+echo "Fetching current version of $AGENT_ID..."
+current=$(curl -sS --fail-with-body "https://api.anthropic.com/v1/agents/$AGENT_ID" "${HEADERS[@]}")
+current_version=$(jq -er '.version' <<<"$current")
+echo "Current version: $current_version"
 
-version=$(jq -er '.version' <<<"$result")
-echo "Updated. New version: $version"
+echo "Updating..."
+updated=$(curl -sS --fail-with-body "https://api.anthropic.com/v1/agents/$AGENT_ID" "${HEADERS[@]}" \
+  -d "$(jq -n \
+    --argjson version "$current_version" \
+    --arg system "$SYSTEM_PROMPT" \
+    '{version: $version, system: $system}')")
+
+new_version=$(jq -er '.version' <<<"$updated")
+echo "Updated. New version: $new_version"
