@@ -41,12 +41,14 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   }
 
   if (!eventName || !INTERESTING_EVENTS.has(eventName)) {
+    console.log("ignored: uninteresting event", { deliveryId, eventName });
     return { statusCode: 200, body: "ignored: uninteresting event" };
   }
 
   const payload = JSON.parse(body);
   const repo: string | undefined = payload.repository?.full_name;
   if (repo !== ALLOWED_REPO) {
+    console.log("ignored: repo not in allowlist", { deliveryId, eventName, repo });
     return { statusCode: 200, body: "ignored: repo not in allowlist" };
   }
 
@@ -56,6 +58,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     payload.pull_request?.head?.ref ?? payload.check_suite?.head_branch;
   const isDependabot = prAuthor === "dependabot[bot]" || headBranch?.startsWith("dependabot/");
   if (!isDependabot) {
+    console.log("ignored: not dependabot", { deliveryId, eventName, repo, prAuthor, headBranch });
     return { statusCode: 200, body: "ignored: not dependabot" };
   }
 
